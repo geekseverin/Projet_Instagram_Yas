@@ -6,3 +6,4 @@ python-dateutil
 scikit-learn
 joblib
 textblob
+faker

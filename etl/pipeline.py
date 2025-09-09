@@ -1,11 +1,12 @@
 # etl/pipeline.py
-from etl.extract import extract_all
-from etl.transform import transform
-from etl.load import load_data
+from etl import extract, transform, load
+
+def run_all():
+    print("=== ETL pipeline start ===")
+    extract.extract_all(limit_posts=20)
+    transform.transform()
+    load.load()
+    print("=== ETL pipeline finished ===")
 
 if __name__ == "__main__":
-    print("📌 Lancement pipeline ETL Instagram")
-    extract_all(limit_posts=20)   # 20 posts (ajuste)
-    transform()
-    load_data()
-    print("✅ ETL terminé")
+    run_all()

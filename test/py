@@ -1,0 +1,6 @@
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # charge les variables du .env
+token = os.getenv("IG_ACCESS_TOKEN")
+print(token)

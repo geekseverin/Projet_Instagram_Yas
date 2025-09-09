@@ -5,68 +5,75 @@ import psycopg2
 import psycopg2.extras
 from config.settings import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS
 
+SCHEMA_SQL = "sql/schema.sql"
 PROC_DIR = "data/processed"
-SCHEMA_SQL_PATH = "sql/schema.sql"
 
 def connect():
     return psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
 
-def create_schema(conn):
-    with open(SCHEMA_SQL_PATH, "r", encoding="utf-8") as f:
+def ensure_schema(conn):
+    with open(SCHEMA_SQL, "r", encoding="utf-8") as f:
         sql = f.read()
     cur = conn.cursor()
     cur.execute(sql)
     conn.commit()
     cur.close()
-    print("[load] schema ensured")
+    print("[load] Schema ensured")
 
-def load_data():
+def load():
     conn = connect()
-    create_schema(conn)
+    ensure_schema(conn)
     cur = conn.cursor()
 
-    posts_df = pd.read_csv(os.path.join(PROC_DIR, "posts.csv"))
-    comments_df = pd.read_csv(os.path.join(PROC_DIR, "comments.csv"))
-    with open(os.path.join(PROC_DIR, "flat_texts.json"), "r", encoding="utf-8") as f:
-        flat_rows = json.load(f)
+    posts_csv = os.path.join(PROC_DIR, "posts.csv")
+    comments_csv = os.path.join(PROC_DIR, "comments.csv")
+    flat_json = os.path.join(PROC_DIR, "flat_texts.json")
 
-    # insert posts
-    for _, row in posts_df.iterrows():
-        cur.execute("""
-            INSERT INTO posts(post_id, caption, media_type, media_url, created_time, like_count, comments_count)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (post_id) DO UPDATE SET caption = EXCLUDED.caption
-        """, (row.post_id, row.caption, row.media_type, row.media_url, row.created_time, int(row.like_count or 0), int(row.comments_count or 0)))
-
-    # insert comments
-    for _, row in comments_df.iterrows():
-        cur.execute("""
-            INSERT INTO comments (comment_id, post_id, parent_comment_id, user_id, text, created_time, like_count)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (comment_id) DO UPDATE SET text = EXCLUDED.text
-        """, (row.comment_id, row.post_id, row.parent_comment_id if 'parent_comment_id' in row else None, row.user_id, row.text, row.created_time, int(row.like_count or 0)))
-
-    # insert flat_texts
-    for r in flat_rows:
-        cur.execute("""
-            INSERT INTO flat_texts (source_type, source_id, post_id, parent_comment_id, user_id, text, like_count, emoji_summary, created_time)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (
-            r.get("source_type"),
-            r.get("source_id"),
-            r.get("post_id"),
-            r.get("parent_comment_id"),
-            r.get("user_id"),
-            r.get("text"),
-            int(r.get("like_count") or 0),
-            json.dumps(r.get("emoji_summary") or {}),
-            r.get("created_time")
-        ))
-
+    if os.path.exists(posts_csv):
+        posts_df = pd.read_csv(posts_csv)
+        for _, r in posts_df.iterrows():
+            cur.execute("""
+                INSERT INTO posts (post_id, caption, media_type, media_url, permalink, created_time, like_count, comments_count)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (post_id) DO UPDATE SET
+                  caption=EXCLUDED.caption,
+                  media_type=EXCLUDED.media_type,
+                  media_url=EXCLUDED.media_url,
+                  permalink=EXCLUDED.permalink,
+                  created_time=EXCLUDED.created_time,
+                  like_count=EXCLUDED.like_count,
+                  comments_count=EXCLUDED.comments_count;
+            """, (r.post_id, r.caption, r.media_type, r.media_url, r.permalink, r.created_time, int(r.like_count or 0), int(r.comments_count or 0)))
+    if os.path.exists(comments_csv):
+        comments_df = pd.read_csv(comments_csv)
+        for _, r in comments_df.iterrows():
+            cur.execute("""
+                INSERT INTO comments (comment_id, post_id, parent_comment_id, username, text, like_count, created_time)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (comment_id) DO UPDATE SET
+                  text=EXCLUDED.text,
+                  like_count=EXCLUDED.like_count;
+            """, (r.comment_id, r.post_id, r.parent_comment_id if 'parent_comment_id' in r and not pd.isna(r.parent_comment_id) else None, r.username, r.text, int(r.like_count or 0), r.created_time))
+    if os.path.exists(flat_json):
+        with open(flat_json, "r", encoding="utf-8") as f:
+            flat_rows = json.load(f)
+        for r in flat_rows:
+            cur.execute("""
+                INSERT INTO flat_texts (source_type, source_id, post_id, parent_comment_id, username, text, like_count, emoji_summary, created_time)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT DO NOTHING
+            """, (
+                r.get("source_type"),
+                r.get("source_id"),
+                r.get("post_id"),
+                r.get("parent_comment_id"),
+                r.get("username"),
+                r.get("text"),
+                int(r.get("like_count") or 0),
+                json.dumps(r.get("emoji_summary") or {}),
+                r.get("created_time")
+            ))
     conn.commit()
     cur.close()
     conn.close()
-    print("[load] data loaded into PostgreSQL")
-
-if __name__ == "__main__":
-    load_data()
+    print("[load] Data loaded into PostgreSQL")
